@@ -295,12 +295,20 @@ namespace Il2CppInspector
              * typeRefPointers must be a series of pointers in __const
              * MethodInvokePointers must be a series of pointers in __text or .text, and in sequential order
              */
-            if ((Metadata != null && Metadata.Types.Length != MetadataRegistration.typeDefinitionsSizesCount)
-                || CodeRegistration.reversePInvokeWrapperCount > 0x10000
-                || CodeRegistration.unresolvedVirtualCallCount > 0x4000 // >= 22
-                || CodeRegistration.interopDataCount > 0x1000           // >= 23
-                || (Image.Version <= 24.1 && CodeRegistration.invokerPointersCount > CodeRegistration.methodPointersCount))
-                throw new NotSupportedException("The detected Il2CppCodeRegistration / Il2CppMetadataRegistration structs do not pass validation. This may mean that their fields have been re-ordered as a form of obfuscation and Il2CppInspector has not been able to restore the original order automatically. Consider re-ordering the fields in Il2CppBinaryClasses.cs and try again.");
+            if (Metadata != null && Metadata.Types.Length != MetadataRegistration.typeDefinitionsSizesCount)
+                throw new NotSupportedException("The detected Il2CppCodeRegistration / Il2CppMetadataRegistration structs do not pass validation. (1)");
+            
+            if (CodeRegistration.reversePInvokeWrapperCount > 0x10000)
+                throw new NotSupportedException("The detected Il2CppCodeRegistration / Il2CppMetadataRegistration structs do not pass validation. (2)");
+            
+            if (CodeRegistration.unresolvedVirtualCallCount > 0x4000) // >= 22
+                throw new NotSupportedException("The detected Il2CppCodeRegistration / Il2CppMetadataRegistration structs do not pass validation. (3)");
+            
+            if (CodeRegistration.interopDataCount > 0x1000) // >= 23
+                throw new NotSupportedException("The detected Il2CppCodeRegistration / Il2CppMetadataRegistration structs do not pass validation. (4)");
+            
+            if ((Image.Version <= 24.1 && CodeRegistration.invokerPointersCount > CodeRegistration.methodPointersCount))
+                throw new NotSupportedException("The detected Il2CppCodeRegistration / Il2CppMetadataRegistration structs do not pass validation. (5)");
             
             // The global method pointer list was deprecated in v24.2 in favour of Il2CppCodeGenModule
             if (Image.Version <= 24.1)
