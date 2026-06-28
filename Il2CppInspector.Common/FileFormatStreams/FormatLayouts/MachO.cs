@@ -31,6 +31,8 @@ namespace Il2CppInspector
         LC_DYLD_INFO_ONLY = 0x80000022,
         LC_FUNCTION_STARTS = 0x26,
         LC_ENCRYPTION_INFO_64 = 0x2C,
+        LC_DYLD_EXPORTS_TRIE = 0x80000033,
+        LC_DYLD_CHAINED_FIXUPS = 0x80000034,
 
         CPU_TYPE_X86 = 7,
         CPU_TYPE_X86_64 = 0x01000000 + CPU_TYPE_X86,
@@ -149,6 +151,37 @@ namespace Il2CppInspector
         public uint CryptOffset;
         public uint CryptSize;
         public uint CryptID;
+    }
+
+    public class MachOLinkedItDataCommand
+    {
+        // MachOLoadCommand
+        public uint DataOffset;
+        public uint DataSize;
+    }
+
+    // dyld_chained_fixups_header (start of LC_DYLD_CHAINED_FIXUPS data)
+    public class MachODyldChainedFixupsHeader
+    {
+        public uint FixupsVersion;
+        public uint StartsOffset;  // offset of MachODyldChainedStartsInImage, relative to this header
+        public uint ImportsOffset;
+        public uint SymbolsOffset;
+        public uint ImportsCount;
+        public uint ImportsFormat;
+        public uint SymbolsFormat;
+    }
+
+    // dyld_chained_starts_in_segment
+    public class MachODyldChainedStartsInSegment
+    {
+        public uint Size;
+        public ushort PageSize;
+        public ushort PointerFormat;   // DYLD_CHAINED_PTR_*
+        public ulong SegmentOffset;    // offset of segment from start of image (== file offset for non-sparse images)
+        public uint MaxValidPointer;
+        public ushort PageCount;
+        // followed by ushort[PageCount] PageStart
     }
 
     public class MachO_nlist<TWord> where TWord : struct

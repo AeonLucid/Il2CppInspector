@@ -69,6 +69,7 @@ namespace Il2CppInspector
 
         private MachOSection<TWord> funcTab;
         private MachOSymtabCommand symTab;
+        private uint chainedFixupsOffset;
 
         private List<Export> exports = new List<Export>();
 
@@ -164,6 +165,18 @@ namespace Il2CppInspector
                         loadExportTrie(dyld.ExportOffset);
                         break;
 
+                    // Export trie for binaries that use chained fixups instead of LC_DYLD_INFO
+                    case MachO.LC_DYLD_EXPORTS_TRIE:
+                        var exportsTrie = ReadObject<MachOLinkedItDataCommand>();
+                        if (exportsTrie.DataSize != 0)
+                            loadExportTrie(exportsTrie.DataOffset);
+                        break;
+
+                    // Chained fixups: pointers in __DATA* are stored as packed chain entries, not real VAs
+                    case MachO.LC_DYLD_CHAINED_FIXUPS:
+                        chainedFixupsOffset = ReadObject<MachOLinkedItDataCommand>().DataOffset;
+                        break;
+
                     // Encryption check
                     // If cryptid == 1, this binary is encrypted with FairPlay DRM
                     case MachO.LC_ENCRYPTION_INFO:
@@ -177,6 +190,10 @@ namespace Il2CppInspector
                 // There might be other data after the load command so always use the specified total size to step forwards
                 Position = startPos + loadCommand.Size;
             }
+
+            // Resolve chained fixups (rebases the encoded pointers in the image to real VAs)
+            if (chainedFixupsOffset != 0)
+                applyChainedFixups();
 
             // Must find the module initializer table (__mod_init_func or __init_offsets)
             if (funcTab == null)
@@ -289,6 +306,65 @@ namespace Il2CppInspector
                 symbolTable.TryAdd(name, new Symbol { Name = name, VirtualAddress = value, Type = type });
             }
         }
+
+        private const ushort DYLD_CHAINED_PTR_START_NONE = 0xFFFF;
+        private const ushort DYLD_CHAINED_PTR_START_MULTI = 0x8000;
+        private const ushort DYLD_CHAINED_PTR_ARM64E = 1;
+        private const ushort DYLD_CHAINED_PTR_ARM64E_FIRMWARE = 7;
+
+        // Walk LC_DYLD_CHAINED_FIXUPS and rebase every chained pointer in the image to a real VA.
+        // Validated against arm64 iOS app binaries (DYLD_CHAINED_PTR_ARM64E_USERLAND).
+        private void applyChainedFixups() {
+            StatusUpdate("Processing chained fixups");
+
+            var header = ReadObject<MachODyldChainedFixupsHeader>(chainedFixupsOffset);
+            long startsInImage = chainedFixupsOffset + header.StartsOffset;
+
+            var segCount = ReadUInt32(startsInImage);
+            var segInfoOffsets = ReadArray<uint>(startsInImage + 4, (int) segCount);
+
+            foreach (var segInfoOffset in segInfoOffsets) {
+                if (segInfoOffset == 0)
+                    continue;
+
+                var starts = ReadObject<MachODyldChainedStartsInSegment>(startsInImage + segInfoOffset);
+                var pageStarts = ReadArray<ushort>(startsInImage + segInfoOffset + 22, starts.PageCount);
+                var stride = chainStride(starts.PointerFormat);
+
+                for (var page = 0; page < starts.PageCount; page++) {
+                    var start = pageStarts[page];
+
+                    // 0xFFFF = no fixups on this page; 0x8000 = multiple chains per page (not emitted by these binaries)
+                    if (start == DYLD_CHAINED_PTR_START_NONE || (start & DYLD_CHAINED_PTR_START_MULTI) != 0)
+                        continue;
+
+                    var cursor = (long) starts.SegmentOffset + (long) page * starts.PageSize + start;
+                    while (true) {
+                        var raw = ReadUInt64(cursor);
+                        var auth = (raw >> 63) & 1;
+                        var bind = (raw >> 62) & 1;
+                        var next = (uint) ((raw >> 51) & 0x7FF);
+
+                        if (bind != 0)
+                            // External import; we don't resolve symbols, so null the slot
+                            Write(cursor, (ulong) 0);
+                        else
+                            // Rebase: runtime offset from the image base. high8 is dropped and auth (PAC)
+                            // pointers keep only their 32-bit offset.
+                            Write(cursor, ImageBase + (auth != 0 ? (raw & 0xFFFFFFFF) : (raw & 0x7FFFFFFFFFF)));
+
+                        if (next == 0)
+                            break;
+                        cursor += next * stride;
+                    }
+                }
+            }
+
+            IsModified = true;
+        }
+
+        private static uint chainStride(ushort pointerFormat)
+            => pointerFormat == DYLD_CHAINED_PTR_ARM64E || pointerFormat == DYLD_CHAINED_PTR_ARM64E_FIRMWARE ? 8u : 4u;
 
         public override uint[] GetFunctionTable() {
             // __init_offsets holds 32-bit offsets from the image base; __mod_init_func holds absolute pointers
