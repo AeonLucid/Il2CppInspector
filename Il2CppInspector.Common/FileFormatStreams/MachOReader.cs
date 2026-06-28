@@ -141,7 +141,7 @@ namespace Il2CppInspector
                             }
 
                             // Initialization (pre-main) functions
-                            if (section.Name == "__mod_init_func") {
+                            if (section.Name == "__mod_init_func" || section.Name == "__init_offsets") {
                                 funcTab = section;
                             }
                         }
@@ -178,7 +178,7 @@ namespace Il2CppInspector
                 Position = startPos + loadCommand.Size;
             }
 
-            // Must find __mod_init_func
+            // Must find the module initializer table (__mod_init_func or __init_offsets)
             if (funcTab == null)
                 return false;
 
@@ -290,7 +290,15 @@ namespace Il2CppInspector
             }
         }
 
-        public override uint[] GetFunctionTable() => ReadArray<TWord>(funcTab.ImageOffset, conv.Int(funcTab.Size) / (Bits / 8)).Select(x => MapVATR(conv.ULong(x)) & 0xffff_fffe).ToArray();
+        public override uint[] GetFunctionTable() {
+            // __init_offsets holds 32-bit offsets from the image base; __mod_init_func holds absolute pointers
+            if (funcTab.Name == "__init_offsets")
+                return ReadArray<uint>(funcTab.ImageOffset, conv.Int(funcTab.Size) / sizeof(uint))
+                    .Select(offset => MapVATR(GlobalOffset + offset) & 0xffff_fffe).ToArray();
+
+            return ReadArray<TWord>(funcTab.ImageOffset, conv.Int(funcTab.Size) / (Bits / 8))
+                .Select(x => MapVATR(conv.ULong(x)) & 0xffff_fffe).ToArray();
+        }
 
         public override Dictionary<string, Symbol> GetSymbolTable() => symbolTable;
 
